@@ -91,7 +91,7 @@ def argon2(P: bytes,
     # calculate xor of the last column
     B_final = B[0][q - 1]
     for i in range(1, p):
-        B_final = np.xor(B_final, B_final[i][q - 1])
+        B_final = np.bitwise_xor(B_final, B_final[i][q - 1])
 
     return H(B_final, tau)
 
@@ -134,48 +134,32 @@ def G(X: bytes, Y: bytes):
     :return:
     """
 
-    R = np.xor(X, Y)
+    R = np.bitwise_xor(X, Y)
 
-    return np.xor(Z, R)
+    Q = []
+    for i in range(0, 64, 8):
+        Q.append(P(*R[i:i + 8]))
+    Q = np.array(Q)
+
+    Z = []
+    for i in range(0, 8):
+        Z_i_j = P(*Q[:, i])
+        Z.append(Z_i_j)
+    Z = np.array(Z).flatten()
+
+    return np.bitwise_xor(Z, R)
 
 
-def P(S_0, S_1, S_2, S_3, S_4, S_5, S_6, S_7):
-    class Number:
-        def __init__(self, number: int):
-            self.number = number
-
-        def __add__(self, other):
-            if isinstance(other, Number):
-                return (self.number + other.number) % (2 ** 64)
-            else:
-                return (self.number + other) % (2 ** 64)
-
-        def __rshift__(self, other):
-            return self.number >> other
-
-        def __mul__(self, other):
-            if isinstance(other, Number):
-                return self.number * other.number
-            else:
-                return self.number * other
-
-        def __getitem__(self, s):
-            return self.number.to_bytes(8, byteorder="little")[s]
-
+def P(S_0, S_2, S_3, S_4, S_5, S_6, S_7):
     def G(a, b, c, d):
-        a = Number(a)
-        b = Number(b)
-        c = Number(c)
-        d = Number(d)
-
-        a = a + b + 2 * a[:32] * b[:32]
-        d = np.xor(d, a) >> 32
-        c = c + d + 2 * c[:32] * d[:32]
-        b = np.xor(b, c) >> 24
-        a = a + b + 2 * a[:32] * b[:32]
-        d = np.xor(d, a) >> 16
-        c = c + d + 2 * c[:32] * d[:32]
-        b = np.xor(b, c) >> 63
+        a = ((((a + b) % 2 ** 64) + 2) % 2 ** 64) * a[:32] * b[:32]
+        d = np.bitwise_xor(d, a) >> 32
+        c = ((((c + d) % 2 ** 64) + 2) % 2 ** 64) * c[:32] * d[:32]
+        b = np.bitwise_xor(b, c) >> 24
+        a = ((((a + b) % 2 ** 64) + 2) % 2 ** 64) * a[:32] * b[:32]
+        d = np.bitwise_xor(d, a) >> 16
+        c = ((((c + d) % 2 ** 64) + 2) % 2 ** 64) * c[:32] * d[:32]
+        b = np.bitwise_xor(b, c) >> 63
         return a, b, c, d
 
 
