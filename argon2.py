@@ -66,10 +66,9 @@ def argon2(P: bytes,
     h += len(K).to_bytes(4, byteorder="little") + K
     h += len(X).to_bytes(4, byteorder="little") + X
 
-    b = blake2b(digest_size=tau)
+    b = blake2b(digest_size=64)
     b.update(h)
     H_0 = b.digest()
-    print(H_0)
 
     # create the B matrix
     q = int(math.floor((m / 4 * p) * 4 * p) / p)
@@ -79,14 +78,19 @@ def argon2(P: bytes,
         B[i][0] = H(H_0 + b'\x00\x00\x00\x00' + i.to_bytes(4, byteorder="little"), 1024)
         B[i][1] = H(H_0 + b'\x01\x00\x00\x00' + i.to_bytes(4, byteorder="little"), 1024)
 
-    for i in range(p):
-        for j in range(q):
-            B[i][j] = G(B[i][j - 1], B[i][j])
-
-    for _ in range(2, t):
+    for r in range(0, t):
         for i in range(p):
-            for j in range(q):
-                B[i][j] = G(B[i][j - 1], B[i][j])
+            for j in range(2, q):
+                if y == 0:
+                    J_1 = B[i][j - 1][:32]
+                    J_2 = B[i][j - 1][32:]
+
+                    l = J_2 % p
+                    x = J_1 ^ 2 / 2 ** 32
+                    y = (len(W) * x) / 2 ** 32
+                    z = len(W) - 1 - y
+
+                    B[i][j] = G(B[i][j - 1], B[l][z])
 
     # calculate xor of the last column
     B_final = B[0][q - 1]
@@ -150,17 +154,69 @@ def G(X: bytes, Y: bytes):
     return np.bitwise_xor(Z, R)
 
 
-def P(S_0, S_2, S_3, S_4, S_5, S_6, S_7):
-    def G(a, b, c, d):
-        a = ((((a + b) % 2 ** 64) + 2) % 2 ** 64) * a[:32] * b[:32]
+def P(S_0, S_1, S_2, S_3, S_4, S_5, S_6, S_7):
+    # S_i = v_{2*i+1} || v_{2*i}
+
+    #  v_0  v_1  v_2  v_3
+    #  v_4  v_5  v_6  v_7
+    #  v_8  v_9 v_10 v_11
+    # v_12 v_13 v_14 v_15
+
+    # S_0 = v_1 || v_0
+    # S_1 = v_3 || v_2
+    # S_2 = v_5 || v_4
+    # S_3 = v_7 || v_6
+    # S_4 = v_9 || v_8
+    # S_5 = v_11 || v_10
+    # S_6 = v_13 || v_12
+    # S_7 = v_15 || v_14
+
+    v_0 = S_0[:32]
+    v_1 = S_0[32:]
+    v_2 = S_1[:32]
+    v_3 = S_1[32:]
+    v_4 = S_2[:32]
+    v_5 = S_2[32:]
+    v_6 = S_3[:32]
+    v_7 = S_3[32:]
+    v_8 = S_4[:32]
+    v_9 = S_4[32:]
+    v_10 = S_5[:32]
+    v_11 = S_5[32:]
+    v_12 = S_6[:32]
+    v_13 = S_6[32:]
+    v_14 = S_7[:32]
+    v_15 = S_7[32:]
+
+    def _G(a, b, c, d):
+        a = (a + b + 2 * a[:32] * b[:32]) % 2 ** 64
         d = np.bitwise_xor(d, a) >> 32
-        c = ((((c + d) % 2 ** 64) + 2) % 2 ** 64) * c[:32] * d[:32]
+        c = (c + d + 2 * c[:32] * d[:32]) % 2 ** 64
         b = np.bitwise_xor(b, c) >> 24
-        a = ((((a + b) % 2 ** 64) + 2) % 2 ** 64) * a[:32] * b[:32]
+        a = (a + b + 2 * a[:32] * b[:32]) % 2 ** 64
         d = np.bitwise_xor(d, a) >> 16
-        c = ((((c + d) % 2 ** 64) + 2) % 2 ** 64) * c[:32] * d[:32]
+        c = (c + d + 2 * c[:32] * d[:32]) % 2 ** 64
         b = np.bitwise_xor(b, c) >> 63
         return a, b, c, d
+
+    v_0, v_4, v_8, v_12 = _G(v_0, v_4, v_8, v_12)
+    v_1, v_5, v_9, v_13 = _G(v_1, v_5, v_9, v_13)
+    v_2, v_6, v_10, v_14 = _G(v_2, v_6, v_10, v_14)
+    v_3, v_7, v_11, v_15 = _G(v_3, v_7, v_11, v_15)
+
+    v_0, v_5, v_10, v_15 = _G(v_0, v_5, v_10, v_15)
+    v_1, v_6, v_11, v_12 = _G(v_1, v_6, v_11, v_12)
+    v_2, v_7, v_8, v_13 = _G(v_2, v_7, v_8, v_13)
+    v_3, v_4, v_9, v_14 = _G(v_3, v_4, v_9, v_14)
+
+    return np.array([v_0, v_1]), \
+           np.array([v_2, v_3]), \
+           np.array([v_4, v_5]), \
+           np.array([v_6, v_7]), \
+           np.array([v_8, v_9]), \
+           np.array([v_10, v_11]), \
+           np.array([v_12, v_13]), \
+           np.array([v_14, v_15])
 
 
 if __name__ == "__main__":
