@@ -1,8 +1,9 @@
 import math
 from binascii import hexlify
-from hashlib import blake2b
 
 import numpy as np
+
+from blake import Blake2b
 
 
 def argon2(P: bytes,
@@ -67,9 +68,7 @@ def argon2(P: bytes,
     h += len(K).to_bytes(4, byteorder="little") + K
     h += len(X).to_bytes(4, byteorder="little") + X
 
-    b = blake2b(digest_size=64)
-    b.update(h)
-    H_0 = b.digest()
+    H_0 = Blake2b.hash(h, hash_length=64)
 
     # create the B matrix
     m_p = math.floor(m / 4 * p) * 4 * p
@@ -163,29 +162,21 @@ def argon2(P: bytes,
 
 def H(X: bytes, tau: int) -> bytes:
     if tau <= 64:
-        b = blake2b(digest_size=tau)
-        b.update(tau.to_bytes(4, byteorder="little") + X)
-        return b.digest()
+        return Blake2b.hash(tau.to_bytes(4, byteorder="little") + X, hash_length=tau)
     else:
         # generate 64 byte blocks
         r = math.ceil(tau / 32) - 2
 
-        b = blake2b(digest_size=64)
-        b.update(tau.to_bytes(4, byteorder="little") + X)
-        V_i = b.digest()
+        V_i = Blake2b.hash(tau.to_bytes(4, byteorder="little") + X, hash_length=64)
 
         A = V_i[:32]
 
         for i in range(1, r):
-            b = blake2b(digest_size=64)
-            b.update(V_i)
-            V_i = b.digest()
+            V_i = Blake2b.hash(V_i, hash_length=64)
             A += V_i[:32]
 
         # now hash the last partially remaining block
-        b = blake2b(digest_size=tau - 32 * r)
-        b.update(V_i)
-        V_i = b.digest()
+        V_i = Blake2b.hash(V_i, hash_length=tau - 32 * r)
         # add the whole hashed value not only the first 32 bytes
         A += V_i
 
@@ -216,14 +207,14 @@ def C(X: bytes, Y: bytes):
         S = []
         for i in range(k, k + 128, 16):
             S.append(R[i: i + 16])
-        Q.extend(argon2pure._P(*S))
+        Q.extend(P(*S))
 
     Z = []
     for i in range(8):
         S = []
         for k in range(i, 64, 8):
             S.append(Q[k])
-        Z.append(argon2pure._P(*S))
+        Z.append(P(*S))
 
     Z = np.array(Z).flatten("F")
 
@@ -265,17 +256,16 @@ def P(S_0, S_1, S_2, S_3, S_4, S_5, S_6, S_7):
     v_15 = int.from_bytes(S_7[8:], "little")
 
     def _G(a, b, c, d):
-        # lowest 32 bits mask 0xffffffff for an int
-        # TODO: fix
         a = (a + b + 2 * (a & 0xffffffff) * (b & 0xffffffff)) % (2 ** 64)
-        d = np.bitwise_xor(d, a) >> 32
+        d = rotate_xor((d ^ a) % (2 ** 64), 32)
         c = (c + d + 2 * (c & 0xffffffff) * (d & 0xffffffff)) % (2 ** 64)
-        b = np.bitwise_xor(b, c) >> 24
+        b = rotate_xor((b ^ c) % (2 ** 64), 24)
 
         a = (a + b + 2 * (a & 0xffffffff) * (b & 0xffffffff)) % (2 ** 64)
-        d = np.bitwise_xor(d, a) >> 16
+        d = rotate_xor((d ^ a) % (2 ** 64), 16)
         c = (c + d + 2 * (c & 0xffffffff) * (d & 0xffffffff)) % (2 ** 64)
-        b = np.bitwise_xor(b, c) >> 63
+        b = rotate_xor((b ^ c) % (2 ** 64), 63)
+
         return a, b, c, d
 
     v_0, v_4, v_8, v_12 = _G(v_0, v_4, v_8, v_12)
@@ -288,21 +278,41 @@ def P(S_0, S_1, S_2, S_3, S_4, S_5, S_6, S_7):
     v_2, v_7, v_8, v_13 = _G(v_2, v_7, v_8, v_13)
     v_3, v_4, v_9, v_14 = _G(v_3, v_4, v_9, v_14)
 
-    return np.array([v_0, v_1]), \
-           np.array([v_2, v_3]), \
-           np.array([v_4, v_5]), \
-           np.array([v_6, v_7]), \
-           np.array([v_8, v_9]), \
-           np.array([v_10, v_11]), \
-           np.array([v_12, v_13]), \
-           np.array([v_14, v_15])
+    v_0 = v_0.to_bytes(8, byteorder="little")
+    v_1 = v_1.to_bytes(8, byteorder="little")
+    v_2 = v_2.to_bytes(8, byteorder="little")
+    v_3 = v_3.to_bytes(8, byteorder="little")
+    v_4 = v_4.to_bytes(8, byteorder="little")
+    v_5 = v_5.to_bytes(8, byteorder="little")
+    v_6 = v_6.to_bytes(8, byteorder="little")
+    v_7 = v_7.to_bytes(8, byteorder="little")
+    v_8 = v_8.to_bytes(8, byteorder="little")
+    v_9 = v_9.to_bytes(8, byteorder="little")
+    v_10 = v_10.to_bytes(8, byteorder="little")
+    v_11 = v_11.to_bytes(8, byteorder="little")
+    v_12 = v_12.to_bytes(8, byteorder="little")
+    v_13 = v_13.to_bytes(8, byteorder="little")
+    v_14 = v_14.to_bytes(8, byteorder="little")
+    v_15 = v_15.to_bytes(8, byteorder="little")
+
+    return v_0 + v_1, \
+           v_2 + v_3, \
+           v_4 + v_5, \
+           v_6 + v_7, \
+           v_8 + v_9, \
+           v_10 + v_11, \
+           v_12 + v_13, \
+           v_14 + v_15
+
+
+def rotate_xor(x, r):
+    x = np.uint64(x)
+    r = np.uint64(r)
+    return int((x >> r) ^ (x << (np.uint64(64) - r)))
 
 
 if __name__ == "__main__":
     import argon2pure
-
-    X = bytes("a" * 1024, "utf8")
-    Y = bytes("b" * 1024, "utf8")
 
     my_res = argon2(P=b"mypassword",
                     S=b"mysecretsalt",
