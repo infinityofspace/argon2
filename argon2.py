@@ -71,30 +71,57 @@ def argon2(P: bytes,
     H_0 = b.digest()
 
     # create the B matrix
-    q = int(math.floor((m / 4 * p) * 4 * p) / p)
+    m_p = math.floor(m / 4 * p) * 4 * p
+    q = int(m_p / p)
     B = [[None for _ in range(q)] for _ in range(p)]
 
     for i in range(p):
-        B[i][0] = H(H_0 + b'\x00\x00\x00\x00' + i.to_bytes(4, byteorder="little"), 1024)
-        B[i][1] = H(H_0 + b'\x01\x00\x00\x00' + i.to_bytes(4, byteorder="little"), 1024)
+        B[i][0] = H(H_0 + b'\0\0\0\0' + i.to_bytes(4, byteorder="little"), 1024)
+        B[i][1] = H(H_0 + b'\1\0\0\0' + i.to_bytes(4, byteorder="little"), 1024)
 
     for r in range(0, t):
-        for i in range(p):
+        for i in range(0, p):
             for j in range(2, q):
+                # # calculate the index i_p and j_p depending on the argon type
+                # R = r.to_bytes(8, byteorder="little") \
+                #     + l.to_bytes(8, byteorder="little") \
+                #     + s.to_bytes(8, byteorder="little") \
+                #     + m_p.to_bytes(8, byteorder="little") \
+                #     + t.to_bytes(8, byteorder="little") \
+                #     + v.to_bytes(8, byteorder="little") \
+                #     + i.to_bytes(8, byteorder="little") \
+                #     + b'\0' * 968
+
                 if y == 0:
-                    J_1 = B[i][j - 1][:32]
-                    J_2 = B[i][j - 1][32:]
+                    # Argon2d
+                    J_1 = int.from_bytes(B[i][j - 1][:32], "little")
+                    J_2 = int.from_bytes(B[i][j - 1][32:], "little")
 
-                    l = J_2 % p
-                    x = J_1 ^ 2 / 2 ** 32
-                    y = (len(W) * x) / 2 ** 32
-                    z = len(W) - 1 - y
+                    if r == 0 and 1:
+                        i_p = i
+                    else:
+                        i_p = J_2 % p
 
-                    B[i][j] = G(B[i][j - 1], B[l][z])
+                    x = (J_1 ** 2) / (2 ** 32)
+                    y = (len(R) * x) / (2 ** 32)
+                    z = len(R) - 1 - y
+                    j_p = R[z]
+                elif y == 1:
+                    # Argon2i
+                    pass
+
+                if r == 0:
+                    B[i][j] = H(B[i][j - 1], B[i_p][j_p])
+                else:
+                    if j == 0:
+                        # use column number for the index of one of the block
+                        B[i][j] = xor(G(B[i][q - 1], B[i_p][j_p]), B[i][j])
+                    else:
+                        B[i][j] = xor(G(B[i][j - 1], B[i_p][j_p]), B[i][j])
 
     # calculate xor of the last column
     B_final = B[0][q - 1]
-    for i in range(1, p):
+    for i in range(0, p):
         B_final = np.bitwise_xor(B_final, B_final[i][q - 1])
 
     return H(B_final, tau)
@@ -130,28 +157,42 @@ def H(X: bytes, tau: int) -> bytes:
         return A + V_i
 
 
+def xor(x, y):
+    x = int.from_bytes(x, byteorder="little")
+    y = int.from_bytes(y, byteorder="little")
+    z = x ^ y
+    return z.to_bytes(1024, byteorder="little")
+
+
 def G(X: bytes, Y: bytes):
     """
+    Compression function.
 
     :param X: 1024 byte block
     :param Y: 1024 byte block
     :return:
     """
 
-    R = np.bitwise_xor(X, Y)
+    R = xor(X, Y)
 
     Q = []
-    for i in range(0, 64, 8):
-        Q.append(P(*R[i:i + 8]))
-    Q = np.array(Q)
+
+    for k in range(0, 1024, 128):
+        S = []
+        for i in range(k, k + 128, 16):
+            S.append(R[i: i + 16])
+        Q.extend(argon2pure._P(*S))
 
     Z = []
-    for i in range(0, 8):
-        Z_i_j = P(*Q[:, i])
-        Z.append(Z_i_j)
-    Z = np.array(Z).flatten()
+    for i in range(8):
+        S = []
+        for k in range(i, 64, 8):
+            S.append(Q[k])
+        Z.append(argon2pure._P(*S))
 
-    return np.bitwise_xor(Z, R)
+    Z = np.array(Z).flatten("F")
+
+    return xor(Z, R)
 
 
 def P(S_0, S_1, S_2, S_3, S_4, S_5, S_6, S_7):
@@ -171,31 +212,34 @@ def P(S_0, S_1, S_2, S_3, S_4, S_5, S_6, S_7):
     # S_6 = v_13 || v_12
     # S_7 = v_15 || v_14
 
-    v_0 = S_0[:32]
-    v_1 = S_0[32:]
-    v_2 = S_1[:32]
-    v_3 = S_1[32:]
-    v_4 = S_2[:32]
-    v_5 = S_2[32:]
-    v_6 = S_3[:32]
-    v_7 = S_3[32:]
-    v_8 = S_4[:32]
-    v_9 = S_4[32:]
-    v_10 = S_5[:32]
-    v_11 = S_5[32:]
-    v_12 = S_6[:32]
-    v_13 = S_6[32:]
-    v_14 = S_7[:32]
-    v_15 = S_7[32:]
+    v_0 = int.from_bytes(S_0[:8], "little")
+    v_1 = int.from_bytes(S_0[8:], "little")
+    v_2 = int.from_bytes(S_1[:8], "little")
+    v_3 = int.from_bytes(S_1[8:], "little")
+    v_4 = int.from_bytes(S_2[:8], "little")
+    v_5 = int.from_bytes(S_2[8:], "little")
+    v_6 = int.from_bytes(S_3[:8], "little")
+    v_7 = int.from_bytes(S_3[8:], "little")
+    v_8 = int.from_bytes(S_4[:8], "little")
+    v_9 = int.from_bytes(S_4[8:], "little")
+    v_10 = int.from_bytes(S_5[:8], "little")
+    v_11 = int.from_bytes(S_5[8:], "little")
+    v_12 = int.from_bytes(S_6[:8], "little")
+    v_13 = int.from_bytes(S_6[8:], "little")
+    v_14 = int.from_bytes(S_7[:8], "little")
+    v_15 = int.from_bytes(S_7[8:], "little")
 
     def _G(a, b, c, d):
-        a = (a + b + 2 * a[:32] * b[:32]) % 2 ** 64
+        # lowest 32 bits mask 0xffffffff for an int
+        # TODO: fix
+        a = (a + b + 2 * (a & 0xffffffff) * (b & 0xffffffff)) % (2 ** 64)
         d = np.bitwise_xor(d, a) >> 32
-        c = (c + d + 2 * c[:32] * d[:32]) % 2 ** 64
+        c = (c + d + 2 * (c & 0xffffffff) * (d & 0xffffffff)) % (2 ** 64)
         b = np.bitwise_xor(b, c) >> 24
-        a = (a + b + 2 * a[:32] * b[:32]) % 2 ** 64
+
+        a = (a + b + 2 * (a & 0xffffffff) * (b & 0xffffffff)) % (2 ** 64)
         d = np.bitwise_xor(d, a) >> 16
-        c = (c + d + 2 * c[:32] * d[:32]) % 2 ** 64
+        c = (c + d + 2 * (c & 0xffffffff) * (d & 0xffffffff)) % (2 ** 64)
         b = np.bitwise_xor(b, c) >> 63
         return a, b, c, d
 
@@ -221,7 +265,12 @@ def P(S_0, S_1, S_2, S_3, S_4, S_5, S_6, S_7):
 
 if __name__ == "__main__":
     import argon2pure
-    from binascii import hexlify
+
+    X = bytes("a" * 1024, "utf8")
+    Y = bytes("b" * 1024, "utf8")
+
+    # res1 = G(X, Y)
+    # res = argon2pure._compress(X, Y)
 
     my_res = argon2(P=b"mypassword",
                     S=b"mysecretsalt",
@@ -231,13 +280,13 @@ if __name__ == "__main__":
                     t=1)
     print(hexlify(my_res))
 
-    lib_res = argon2pure.argon2(b'mypassword',
-                                b'mysecretsalt',
-                                time_cost=1,
-                                memory_cost=8,
-                                parallelism=1,
-                                tag_length=32)
-
-    print(hexlify(lib_res))
-
-    print(my_res == lib_res)
+    # lib_res = argon2pure.argon2(b'mypassword',
+    #                             b'mysecretsalt',
+    #                             time_cost=1,
+    #                             memory_cost=8,
+    #                             parallelism=1,
+    #                             tag_length=32)
+    #
+    # print(hexlify(lib_res))
+    #
+    # print(my_res == lib_res)
