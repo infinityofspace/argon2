@@ -1,4 +1,5 @@
 import math
+from binascii import hexlify
 from hashlib import blake2b
 
 import numpy as np
@@ -75,54 +76,88 @@ def argon2(P: bytes,
     q = int(m_p / p)
     B = [[None for _ in range(q)] for _ in range(p)]
 
-    for i in range(p):
+    for i in range(0, p):
         B[i][0] = H(H_0 + b'\0\0\0\0' + i.to_bytes(4, byteorder="little"), 1024)
         B[i][1] = H(H_0 + b'\1\0\0\0' + i.to_bytes(4, byteorder="little"), 1024)
 
+    # this value is named S in the paper; renamed to not override nonce S
+    N_VERT_SLICES = 4
+    segment_length = int(q / N_VERT_SLICES)
+
     for r in range(0, t):
-        for i in range(0, p):
-            for j in range(2, q):
-                # # calculate the index i_p and j_p depending on the argon type
-                # R = r.to_bytes(8, byteorder="little") \
-                #     + l.to_bytes(8, byteorder="little") \
-                #     + s.to_bytes(8, byteorder="little") \
-                #     + m_p.to_bytes(8, byteorder="little") \
-                #     + t.to_bytes(8, byteorder="little") \
-                #     + v.to_bytes(8, byteorder="little") \
-                #     + i.to_bytes(8, byteorder="little") \
-                #     + b'\0' * 968
+        vert_slice_start = 0
+        if r == 0:
+            vert_slice_start = 1
+        for vert_slice in range(vert_slice_start, N_VERT_SLICES):
+            for i in range(0, p):
+                # i is the absolute row index
+                for segment_col_idx in range(segment_length):
+                    # segment_col_idx is the local column index inside the segement
 
-                if y == 0:
-                    # Argon2d
-                    J_1 = int.from_bytes(B[i][j - 1][:32], "little")
-                    J_2 = int.from_bytes(B[i][j - 1][32:], "little")
+                    # calculate the absolute col idx j from the internal segment column idx
+                    j = vert_slice * segment_length + segment_col_idx
 
-                    if r == 0 and 1:
+                    if y == 0:
+                        # Argon2d
+                        J_1 = int.from_bytes(B[i][(j - 1) % q][:32], "little")
+                        J_2 = int.from_bytes(B[i][(j - 1) % q][32:], "little")
+                    elif y == 1:
+                        # Argon2i
+                        pass
+
+                    # mapping J_1 and J_2 to the reference block index
+                    # i_p is named l for the lane in the paper
+                    if r == 0 and vert_slice == 0:
                         i_p = i
                     else:
                         i_p = J_2 % p
 
-                    x = (J_1 ** 2) / (2 ** 32)
-                    y = (len(R) * x) / (2 ** 32)
-                    z = len(R) - 1 - y
-                    j_p = R[z]
-                elif y == 1:
-                    # Argon2i
-                    pass
+                    # start and end are mark the set of indices used for determining
+                    # the reference block (in the paper it is named R)
+                    # (see 3.3 mapping indices in th paper)
+                    end = 0
 
-                if r == 0:
-                    B[i][j] = H(B[i][j - 1], B[i_p][j_p])
-                else:
-                    if j == 0:
-                        # use column number for the index of one of the block
-                        B[i][j] = xor(G(B[i][q - 1], B[i_p][j_p]), B[i][j])
+                    if r == 0:
+                        start = 0
+
+                        # first iteration
+                        if i == i_p:
+                            end = vert_slice * segment_length * segment_col_idx - 1
+                        else:
+                            if segment_col_idx == 0:
+                                end = vert_slice * segment_length - 1
+                            else:
+                                end = vert_slice * segment_length
                     else:
-                        B[i][j] = xor(G(B[i][j - 1], B[i_p][j_p]), B[i][j])
+                        start = ((vert_slice + 1) * segment_length) % q
+
+                        # current lane is l
+                        if i == i_p:
+                            end = q - segment_length + segment_col_idx - 1
+                        else:
+                            if segment_col_idx == 0:
+                                end = q - segment_length + segment_col_idx - 1
+                            else:
+                                end = q - segment_length
+
+                    x = (J_1 ** 2) / (2 ** 32)
+                    y = (end * x) / (2 ** 32)
+                    z = end - 1 - y
+                    j_p = int((start + z) % q)
+
+                    if r == 0:
+                        B[i][j] = C(B[i][j - 1], B[i_p][j_p])
+                    else:
+                        if j == 0:
+                            # use column number for the index of one of the block
+                            B[i][j] = xor(C(B[i][q - 1], B[i_p][j_p]), B[i][j])
+                        else:
+                            B[i][j] = xor(C(B[i][j - 1], B[i_p][j_p]), B[i][j])
 
     # calculate xor of the last column
     B_final = B[0][q - 1]
     for i in range(0, p):
-        B_final = np.bitwise_xor(B_final, B_final[i][q - 1])
+        B_final = xor(B_final, B[i][q - 1])
 
     return H(B_final, tau)
 
@@ -142,7 +177,7 @@ def H(X: bytes, tau: int) -> bytes:
 
         A = V_i[:32]
 
-        for i in range(2, r):
+        for i in range(1, r):
             b = blake2b(digest_size=64)
             b.update(V_i)
             V_i = b.digest()
@@ -152,9 +187,10 @@ def H(X: bytes, tau: int) -> bytes:
         b = blake2b(digest_size=tau - 32 * r)
         b.update(V_i)
         V_i = b.digest()
-        A += V_i[:32]
+        # add the whole hashed value not only the first 32 bytes
+        A += V_i
 
-        return A + V_i
+        return A
 
 
 def xor(x, y):
@@ -164,7 +200,7 @@ def xor(x, y):
     return z.to_bytes(1024, byteorder="little")
 
 
-def G(X: bytes, Y: bytes):
+def C(X: bytes, Y: bytes):
     """
     Compression function.
 
@@ -269,24 +305,21 @@ if __name__ == "__main__":
     X = bytes("a" * 1024, "utf8")
     Y = bytes("b" * 1024, "utf8")
 
-    # res1 = G(X, Y)
-    # res = argon2pure._compress(X, Y)
-
     my_res = argon2(P=b"mypassword",
                     S=b"mysecretsalt",
                     p=1,
-                    tau=32,
+                    tau=8,
                     m=8,
                     t=1)
     print(hexlify(my_res))
 
-    # lib_res = argon2pure.argon2(b'mypassword',
-    #                             b'mysecretsalt',
-    #                             time_cost=1,
-    #                             memory_cost=8,
-    #                             parallelism=1,
-    #                             tag_length=32)
-    #
-    # print(hexlify(lib_res))
-    #
-    # print(my_res == lib_res)
+    lib_res = argon2pure.argon2(b'mypassword',
+                                b'mysecretsalt',
+                                time_cost=1,
+                                memory_cost=8,
+                                parallelism=1,
+                                tag_length=8,
+                                type_code=argon2pure.ARGON2D)
+    print(hexlify(lib_res))
+
+    print(my_res == lib_res)
