@@ -11,7 +11,7 @@ def argon2(P: bytes,
            tau: int,
            m: int,
            t: int,
-           v: int = 16,
+           v: int = 19,
            K: bytes = b"",
            X: bytes = b"",
            y: int = 0):
@@ -47,8 +47,8 @@ def argon2(P: bytes,
     assert 8 * p <= m < 2 ** 32
     # iterations: 1 to 2^32 − 1
     assert 1 <= t < 2 ** 32
-    # argon2 version: 16
-    assert v == 16
+    # argon2 version: 19
+    assert v == 19
     # secret value length: 0 to 32 bytes
     assert 0 <= len(K) <= 32
     # associated data length: 0 to 2^32 − 1 bytes
@@ -86,21 +86,22 @@ def argon2(P: bytes,
 
     for r in range(0, t):
         vert_slice_start = 0
+        # skip the first
         if r == 0:
             vert_slice_start = 1
         for vert_slice in range(vert_slice_start, N_VERT_SLICES):
             for i in range(0, p):
                 # i is the absolute row index
                 for segment_col_idx in range(segment_length):
-                    # segment_col_idx is the local column index inside the segement
+                    # segment_col_idx is the local column index inside the segment
 
                     # calculate the absolute col idx j from the internal segment column idx
                     j = vert_slice * segment_length + segment_col_idx
 
                     if y == 0:
                         # Argon2d
-                        J_1 = int.from_bytes(B[i][(j - 1) % q][:32], "little")
-                        J_2 = int.from_bytes(B[i][(j - 1) % q][32:], "little")
+                        J_1 = int.from_bytes(B[i][(j - 1)][:4], "little")
+                        J_2 = int.from_bytes(B[i][(j - 1)][4:8], "little")
                     elif y == 1:
                         # Argon2i
                         pass
@@ -122,7 +123,7 @@ def argon2(P: bytes,
 
                         # first iteration
                         if i == i_p:
-                            end = vert_slice * segment_length * segment_col_idx - 1
+                            end = j - 1
                         else:
                             if segment_col_idx == 0:
                                 end = vert_slice * segment_length - 1
@@ -136,12 +137,12 @@ def argon2(P: bytes,
                             end = q - segment_length + segment_col_idx - 1
                         else:
                             if segment_col_idx == 0:
-                                end = q - segment_length + segment_col_idx - 1
+                                end = q - segment_length - 1
                             else:
                                 end = q - segment_length
 
-                    x = (J_1 ** 2) / (2 ** 32)
-                    y = (end * x) / (2 ** 32)
+                    x = int((J_1 ** 2) / (2 ** 32))
+                    y = int((end * x) / (2 ** 32))
                     z = end - 1 - y
                     j_p = int((start + z) % q)
 
@@ -310,7 +311,7 @@ if __name__ == "__main__":
                     p=1,
                     tau=8,
                     m=8,
-                    t=1)
+                    t=3)
     print(hexlify(my_res))
 
     lib_res = argon2pure.argon2(b'mypassword',
