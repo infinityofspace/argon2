@@ -11,10 +11,10 @@ def argon2(P: bytes,
            tau: int,
            m: int,
            t: int,
-           v: int = 19,
+           V: int = 19,
            K: bytes = b"",
            X: bytes = b"",
-           y: int = 0):
+           Y: int = 0):
     """
 
     :param P: Message can have any length from 0 to 2^32 − 1 bytes
@@ -24,10 +24,10 @@ def argon2(P: bytes,
     :param tau: Length of output. It can be any integer number of bytes from 4 to 2^32 − 1
     :param m: Memory size can be any integer number of kilobytes from 8p to 2^32 − 1 (p: degree of parallelism)
     :param t: Number of iterations can be any integer number from 1 to 2^32 − 1
-    :param v: version number one byte 0x10
+    :param V: version number one byte 0x10
     :param K: Secret value can have any length from 0 to 32 bytes
     :param X: Associated data can have any length from 0 to 2^32 − 1 bytes
-    :param y: Argon Type:
+    :param Y: Argon Type:
                 - for Argon2d: 0
                 - for Argon2i: 1
 
@@ -48,7 +48,7 @@ def argon2(P: bytes,
     # iterations: 1 to 2^32 − 1
     assert 1 <= t < 2 ** 32
     # argon2 version: 19
-    assert v == 19
+    assert V == 19
     # secret value length: 0 to 32 bytes
     assert 0 <= len(K) <= 32
     # associated data length: 0 to 2^32 − 1 bytes
@@ -59,8 +59,8 @@ def argon2(P: bytes,
         + tau.to_bytes(4, byteorder="little") \
         + m.to_bytes(4, byteorder="little") \
         + t.to_bytes(4, byteorder="little") \
-        + v.to_bytes(4, byteorder="little") \
-        + y.to_bytes(4, byteorder="little")
+        + V.to_bytes(4, byteorder="little") \
+        + Y.to_bytes(4, byteorder="little")
 
     h += len(P).to_bytes(4, byteorder="little") + P
     h += len(S).to_bytes(4, byteorder="little") + S
@@ -98,11 +98,11 @@ def argon2(P: bytes,
                     # calculate the absolute col idx j from the internal segment column idx
                     j = vert_slice * segment_length + segment_col_idx
 
-                    if y == 0:
+                    if Y == 0:
                         # Argon2d
                         J_1 = int.from_bytes(B[i][(j - 1)][:4], "little")
                         J_2 = int.from_bytes(B[i][(j - 1)][4:8], "little")
-                    elif y == 1:
+                    elif Y == 1:
                         # Argon2i
                         pass
 
@@ -116,8 +116,6 @@ def argon2(P: bytes,
                     # start and end are mark the set of indices used for determining
                     # the reference block (in the paper it is named R)
                     # (see 3.3 mapping indices in th paper)
-                    end = 0
-
                     if r == 0:
                         start = 0
 
@@ -157,7 +155,7 @@ def argon2(P: bytes,
 
     # calculate xor of the last column
     B_final = B[0][q - 1]
-    for i in range(0, p):
+    for i in range(1, p):
         B_final = xor(B_final, B[i][q - 1])
 
     return H(B_final, tau)
@@ -311,7 +309,7 @@ if __name__ == "__main__":
                     p=1,
                     tau=8,
                     m=8,
-                    t=3)
+                    t=1)
     print(hexlify(my_res))
 
     lib_res = argon2pure.argon2(b'mypassword',
