@@ -1,6 +1,3 @@
-from binascii import hexlify
-
-import argon2pure
 import numpy as np
 
 
@@ -118,19 +115,3 @@ class Blake2b:
             h[i] = h[i] ^ v[i] ^ v[i + 8]
 
         return h[0:8]
-
-
-if __name__ == "__main__":
-    from hashlib import blake2b
-    # res1 = blake2b(b"abc").digest()
-    # res1 = argon2pure.Blake2b(b"abc").digest()
-    # print(hexlify(res1))
-    # res2 = Blake2b.hash(b"abc")
-    # print(hexlify(res2))
-    # print(res1 == res2)
-
-    res1 = argon2pure.Blake2b(b"1"*128 + b"2"*128 + b"3"*128).digest()
-    print(hexlify(res1))
-    res2 = Blake2b.hash(b"1"*128 + b"2"*128 + b"3"*128)
-    print(hexlify(res2))
-    print(res1 == res2)

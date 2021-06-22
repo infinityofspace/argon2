@@ -1,2 +1,5 @@
 numpy
-argon2pure
+# for visualisation
+matplotlib
+# c bindings for testing
+argon2_cffi

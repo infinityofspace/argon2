@@ -1,5 +1,4 @@
 import math
-from binascii import hexlify
 
 import numpy as np
 
@@ -25,7 +24,7 @@ def argon2(P: bytes,
     :param tau: Length of output. It can be any integer number of bytes from 4 to 2^32 − 1
     :param m: Memory size can be any integer number of kilobytes from 8p to 2^32 − 1 (p: degree of parallelism)
     :param t: Number of iterations can be any integer number from 1 to 2^32 − 1
-    :param V: version number one byte 0x10
+    :param V: version number 19
     :param K: Secret value can have any length from 0 to 32 bytes
     :param X: Associated data can have any length from 0 to 2^32 − 1 bytes
     :param Y: Argon Type:
@@ -75,6 +74,7 @@ def argon2(P: bytes,
     q = int(m_p / p)
     B = [[None for _ in range(q)] for _ in range(p)]
 
+    # generate the first 2 columns
     for i in range(0, p):
         B[i][0] = H(H_0 + b'\0\0\0\0' + i.to_bytes(4, byteorder="little"), 1024)
         B[i][1] = H(H_0 + b'\1\0\0\0' + i.to_bytes(4, byteorder="little"), 1024)
@@ -83,74 +83,22 @@ def argon2(P: bytes,
     N_VERT_SLICES = 4
     segment_length = int(q / N_VERT_SLICES)
 
-    for r in range(0, t):
-        vert_slice_start = 0
-        # skip the first
-        if r == 0:
-            vert_slice_start = 1
-        for vert_slice in range(vert_slice_start, N_VERT_SLICES):
+    # first round
+    for vert_slice in range(0, N_VERT_SLICES):
+        for i in range(0, p):
+            for segment_col_idx in range(segment_length):
+                j = vert_slice * segment_length + segment_col_idx
+                # the first 2 columns are already generated, skip them
+                if j >= 2:
+                    calculate_new_block(j, segment_length, segment_col_idx, vert_slice, 0, Y, i, p, q, B)
+
+    # any additional rounds
+    for r in range(1, t):
+        for vert_slice in range(0, N_VERT_SLICES):
             for i in range(0, p):
-                # i is the absolute row index
                 for segment_col_idx in range(segment_length):
-                    # segment_col_idx is the local column index inside the segment
-
-                    # calculate the absolute col idx j from the internal segment column idx
                     j = vert_slice * segment_length + segment_col_idx
-
-                    if Y == 0:
-                        # Argon2d
-                        J_1 = int.from_bytes(B[i][(j - 1)][:4], "little")
-                        J_2 = int.from_bytes(B[i][(j - 1)][4:8], "little")
-                    elif Y == 1:
-                        # Argon2i
-                        pass
-
-                    # mapping J_1 and J_2 to the reference block index
-                    # i_p is named l for the lane in the paper
-                    if r == 0 and vert_slice == 0:
-                        i_p = i
-                    else:
-                        i_p = J_2 % p
-
-                    # start and end are mark the set of indices used for determining
-                    # the reference block (in the paper it is named R)
-                    # (see 3.3 mapping indices in th paper)
-                    if r == 0:
-                        start = 0
-
-                        # first iteration
-                        if i == i_p:
-                            end = j - 1
-                        else:
-                            if segment_col_idx == 0:
-                                end = vert_slice * segment_length - 1
-                            else:
-                                end = vert_slice * segment_length
-                    else:
-                        start = ((vert_slice + 1) * segment_length) % q
-
-                        # current lane is l
-                        if i == i_p:
-                            end = q - segment_length + segment_col_idx - 1
-                        else:
-                            if segment_col_idx == 0:
-                                end = q - segment_length - 1
-                            else:
-                                end = q - segment_length
-
-                    x = int((J_1 ** 2) / (2 ** 32))
-                    y = int((end * x) / (2 ** 32))
-                    z = end - 1 - y
-                    j_p = int((start + z) % q)
-
-                    if r == 0:
-                        B[i][j] = C(B[i][j - 1], B[i_p][j_p])
-                    else:
-                        if j == 0:
-                            # use column number for the index of one of the block
-                            B[i][j] = xor(C(B[i][q - 1], B[i_p][j_p]), B[i][j])
-                        else:
-                            B[i][j] = xor(C(B[i][j - 1], B[i_p][j_p]), B[i][j])
+                    calculate_new_block(j, segment_length, segment_col_idx, vert_slice, r, Y, i, p, q, B)
 
     # calculate xor of the last column
     B_final = B[0][q - 1]
@@ -158,6 +106,63 @@ def argon2(P: bytes,
         B_final = xor(B_final, B[i][q - 1])
 
     return H(B_final, tau)
+
+
+def calculate_new_block(j, segment_length, segment_col_idx, vert_slice, r, Y, i, p, q, B):
+    if Y == 0:
+        # Argon2d
+        J_1 = int.from_bytes(B[i][(j - 1)][:4], "little")
+        J_2 = int.from_bytes(B[i][(j - 1)][4:8], "little")
+    elif Y == 1:
+        # Argon2i
+        pass
+
+        # mapping J_1 and J_2 to the reference block index
+        # i_p is named l for the lane in the paper
+    if r == 0 and vert_slice == 0:
+        i_p = i
+    else:
+        i_p = J_2 % p
+
+        # start and end are mark the set of indices used for determining
+        # the reference block (in the paper it is named R)
+        # (see 3.3 mapping indices in th paper)
+    if r == 0:
+        start = 0
+
+        # first iteration
+        if i == i_p:
+            end = j - 1
+        else:
+            if segment_col_idx == 0:
+                end = vert_slice * segment_length - 1
+            else:
+                end = vert_slice * segment_length
+    else:
+        start = ((vert_slice + 1) * segment_length) % q
+
+        # current lane is l
+        if i == i_p:
+            end = q - segment_length + segment_col_idx - 1
+        else:
+            if segment_col_idx == 0:
+                end = q - segment_length - 1
+            else:
+                end = q - segment_length
+
+    x = int((J_1 ** 2) / (2 ** 32))
+    y = int((end * x) / (2 ** 32))
+    z = end - 1 - y
+    j_p = int((start + z) % q)
+
+    if r == 0:
+        B[i][j] = C(B[i][j - 1], B[i_p][j_p])
+    else:
+        if j == 0:
+            # use column number for the index of one of the block
+            B[i][j] = xor(C(B[i][q - 1], B[i_p][j_p]), B[i][j])
+        else:
+            B[i][j] = xor(C(B[i][j - 1], B[i_p][j_p]), B[i][j])
 
 
 def H(X: bytes, tau: int) -> bytes:
@@ -309,26 +314,3 @@ def rotate_xor(x, r):
     x = np.uint64(x)
     r = np.uint64(r)
     return int((x >> r) ^ (x << (np.uint64(64) - r)))
-
-
-if __name__ == "__main__":
-    import argon2pure
-
-    my_res = argon2(P=b"mypassword",
-                    S=b"mysecretsalt",
-                    p=1,
-                    tau=8,
-                    m=8,
-                    t=1)
-    print(hexlify(my_res))
-
-    lib_res = argon2pure.argon2(b'mypassword',
-                                b'mysecretsalt',
-                                time_cost=1,
-                                memory_cost=8,
-                                parallelism=1,
-                                tag_length=8,
-                                type_code=argon2pure.ARGON2D)
-    print(hexlify(lib_res))
-
-    print(my_res == lib_res)
