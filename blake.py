@@ -1,3 +1,5 @@
+import struct
+
 import numpy as np
 
 
@@ -62,8 +64,7 @@ class Blake2b:
         size_counter += len(remaining_chunk)
         h = Blake2b._F(h, chunk, size_counter, True)
 
-        import struct
-        return struct.pack('<8Q', *h)[0:hash_length]
+        return struct.pack("<8Q", *h)[0:hash_length]
 
     @staticmethod
     def _G(v, a, b, c, d, x, y):
