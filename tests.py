@@ -133,6 +133,65 @@ class Argon2dTest(unittest.TestCase):
 
         assert hash_c == hash
 
+    def test_parallelism(self):
+        password = b"password"
+        salt = b"salt1234"
+        time_cost = 2
+        memory_cost = 16
+        parallelism = 2
+        hash_len = 64
+        argon_type = argon2.low_level.Type.D
+
+        hash_c = argon2.hash_password_raw(
+            password=password,
+            salt=salt,
+            time_cost=time_cost,
+            memory_cost=memory_cost,
+            parallelism=parallelism,
+            hash_len=hash_len,
+            type=argon_type
+        )
+        print(hexlify(hash_c))
+
+        hash = argon.argon2(
+            P=password,
+            S=salt,
+            p=parallelism,
+            tau=hash_len,
+            m=memory_cost,
+            t=time_cost)
+        print(hexlify(hash))
+
+        password = b"password"
+        salt = b"salt1234"
+        time_cost = 2
+        memory_cost = 32
+        parallelism = 4
+        hash_len = 64
+        argon_type = argon2.low_level.Type.D
+
+        hash_c = argon2.hash_password_raw(
+            password=password,
+            salt=salt,
+            time_cost=time_cost,
+            memory_cost=memory_cost,
+            parallelism=parallelism,
+            hash_len=hash_len,
+            type=argon_type
+        )
+        print(hexlify(hash_c))
+
+        hash = argon.argon2(
+            P=password,
+            S=salt,
+            p=parallelism,
+            tau=hash_len,
+            m=memory_cost,
+            t=time_cost)
+        print(hexlify(hash))
+
+        assert hash_c == hash
+
 
 class Blake2bTest(unittest.TestCase):
 
@@ -159,14 +218,6 @@ class Blake2bTest(unittest.TestCase):
         print(hexlify(hash_own_impl))
 
         assert hash_std_lib == hash_own_impl
-
-    # def test_key(self):
-    #     hash_std_lib = blake2b(b"password", key=b"super-secret-key").digest()
-    #     print(hexlify(hash_std_lib))
-    #     hash_own_impl = Blake2b.hash(b"password", key=b"super-secret-key")
-    #     print(hexlify(hash_own_impl))
-    #
-    #     assert hash_std_lib == hash_own_impl
 
     def test_lower_hash_len(self):
         hash_std_lib = blake2b(b"abc", digest_size=32).digest()

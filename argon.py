@@ -70,7 +70,7 @@ def argon2(P: bytes,
     H_0 = Blake2b.hash(h, hash_length=64)
 
     # create the B matrix
-    m_p = math.floor(m / 4 * p) * 4 * p
+    m_p = math.floor(m / (4 * p)) * 4 * p
     q = int(m_p / p)
     B = [[None for _ in range(q)] for _ in range(p)]
 
