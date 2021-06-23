@@ -1,4 +1,6 @@
 import math
+from itertools import repeat
+from multiprocessing import Pool
 
 import numpy as np
 
@@ -14,7 +16,8 @@ def argon2(P: bytes,
            V: int = 19,
            K: bytes = b"",
            X: bytes = b"",
-           Y: int = 0):
+           Y: int = 0,
+           force_single_process=False):
     """
 
     :param P: Message can have any length from 0 to 2^32 − 1 bytes
@@ -30,6 +33,8 @@ def argon2(P: bytes,
     :param Y: Argon Type:
                 - for Argon2d: 0
                 - for Argon2i: 1
+
+    :param force_single_process: custom argument for benchmarking
 
     :return:
     """
@@ -83,22 +88,29 @@ def argon2(P: bytes,
     N_VERT_SLICES = 4
     segment_length = int(q / N_VERT_SLICES)
 
-    # first round
-    for vert_slice in range(0, N_VERT_SLICES):
-        for i in range(0, p):
-            for segment_col_idx in range(segment_length):
-                j = vert_slice * segment_length + segment_col_idx
-                # the first 2 columns are already generated, skip them
-                if j >= 2:
-                    calculate_new_block(j, segment_length, segment_col_idx, vert_slice, 0, Y, i, p, q, B)
+    if p > 1 and not force_single_process:
+        multiprocessing_pool = Pool(processes=p)
 
-    # any additional rounds
-    for r in range(1, t):
+    for r in range(0, t):
         for vert_slice in range(0, N_VERT_SLICES):
-            for i in range(0, p):
-                for segment_col_idx in range(segment_length):
-                    j = vert_slice * segment_length + segment_col_idx
-                    calculate_new_block(j, segment_length, segment_col_idx, vert_slice, r, Y, i, p, q, B)
+            if p > 1 and not force_single_process:
+                # run the block update for each segment in an own process
+                args = repeat(vert_slice), repeat(segment_length), repeat(r), repeat(Y), repeat(p), repeat(q), repeat(B)
+                segm_updates = multiprocessing_pool.starmap(update_segment, zip(range(0, p), *args))
+
+                # update B matrix in them main process
+                for update in segm_updates:
+                    if update:
+                        B_new, idxs = update
+                        for i, j in idxs:
+                            B[i][j] = B_new[i][j]
+            else:
+                for i in range(0, p):
+                    # drop the return value since we dont have to merge the results
+                    update_segment(i, vert_slice, segment_length, r, Y, p, q, B)
+
+    if p > 1 and not force_single_process:
+        multiprocessing_pool.close()
 
     # calculate xor of the last column
     B_final = B[0][q - 1]
@@ -108,8 +120,33 @@ def argon2(P: bytes,
     return H(B_final, tau)
 
 
-def calculate_new_block(j, segment_length, segment_col_idx, vert_slice, r, Y, i, p, q, B):
+def update_segment(i, vert_slice, segment_length, r, Y, p, q, B):
+    """
+    Updates all column in the segment, this function can run in an own process/thread
+    because the B matrix segments are independent.
+    """
+
+    block_idxs = []
+    # update each column of the segment
+    for segment_col_idx in range(segment_length):
+        j = vert_slice * segment_length + segment_col_idx
+        # in the first round we do not need update the first to column, so skip them
+        if (r == 0 and j >= 2) or r > 0:
+            block_idxs.append((i, j))
+            update_block(j, segment_length, segment_col_idx, vert_slice, r, Y, i, p, q, B)
+
+    if len(block_idxs) > 0:
+        return B, block_idxs
+
+
+def update_block(j, segment_length, segment_col_idx, vert_slice, r, Y, i, p, q, B):
+    """
+    Update the given block with indices i,j
+    """
+
     if Y == 0:
+        if not B[i][(j - 1)]:
+            print(1)
         # Argon2d
         J_1 = int.from_bytes(B[i][(j - 1)][:4], "little")
         J_2 = int.from_bytes(B[i][(j - 1)][4:8], "little")
@@ -156,16 +193,17 @@ def calculate_new_block(j, segment_length, segment_col_idx, vert_slice, r, Y, i,
     j_p = int((start + z) % q)
 
     if r == 0:
+        # for the first round we only need the compress function
         B[i][j] = C(B[i][j - 1], B[i_p][j_p])
     else:
-        if j == 0:
-            # use column number for the index of one of the block
-            B[i][j] = xor(C(B[i][q - 1], B[i_p][j_p]), B[i][j])
-        else:
-            B[i][j] = xor(C(B[i][j - 1], B[i_p][j_p]), B[i][j])
+        B[i][j] = xor(C(B[i][j - 1], B[i_p][j_p]), B[i][j])
 
 
 def H(X: bytes, tau: int) -> bytes:
+    """
+     Custom Argon2 hash function. Uses internal the Blake2b hash function.
+    """
+
     if tau <= 64:
         return Blake2b.hash(tau.to_bytes(4, byteorder="little") + X, hash_length=tau)
     else:
@@ -201,7 +239,7 @@ def C(X: bytes, Y: bytes):
 
     :param X: 1024 byte block
     :param Y: 1024 byte block
-    :return:
+    :return: compression of X and Y
     """
 
     R = xor(X, Y)
@@ -227,6 +265,10 @@ def C(X: bytes, Y: bytes):
 
 
 def P(S_0, S_1, S_2, S_3, S_4, S_5, S_6, S_7):
+    """
+    Permutation function P.
+    """
+
     # S_i = v_{2*i+1} || v_{2*i}
 
     #  v_0  v_1  v_2  v_3
@@ -261,6 +303,10 @@ def P(S_0, S_1, S_2, S_3, S_4, S_5, S_6, S_7):
     v_15 = int.from_bytes(S_7[8:], "little")
 
     def _G(a, b, c, d):
+        """
+        Mixing function G based on Blake2b mix function G.
+        """
+
         a = (a + b + 2 * (a & 0xffffffff) * (b & 0xffffffff)) % (2 ** 64)
         d = rotate_xor((d ^ a) % (2 ** 64), 32)
         c = (c + d + 2 * (c & 0xffffffff) * (d & 0xffffffff)) % (2 ** 64)
