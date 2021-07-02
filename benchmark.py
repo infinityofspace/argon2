@@ -1,5 +1,5 @@
-import timeit
 import time
+import timeit
 
 import matplotlib.pyplot as plt
 
@@ -20,8 +20,8 @@ def bench(kwargs, code_str, setup_str, repeats=100):
                 print(f"\r{val_name}: {v} [{i}/{len(value)}] avg. {avg}", sep=" ", end="", flush=True)
 
                 args[val_name] = v
-                time = timeit.timeit(code_str.format(**args), setup=setup_str, number=repeats)
-                compute_times.append(time / repeats)
+                t = timeit.timeit(code_str.format(**args), setup=setup_str, number=repeats)
+                compute_times.append(t / repeats)
             print()
 
     return compute_times
@@ -79,7 +79,6 @@ def plot_time_results(values, timings, labels, value_label, title):
     for v, t, l in zip(values, timings, labels):
         plt.plot(v, t, label=l)
     plt.xlabel(value_label)
-    plt.xticks(values[0])
     plt.ylabel("time")
     plt.title(title)
     plt.legend()
@@ -196,48 +195,50 @@ def c_lib_bench():
 
 def parallelism_bench():
     res_single_2 = bench_own_impl(repeats=10,
-                         p=2,
-                         tau=64,
-                         m=16,
-                         t_range=range(1, 50),
-                         force_single_process=True)
-
-    res_parallel_2 = bench_own_impl(repeats=10,
                                   p=2,
                                   tau=64,
                                   m=16,
-                                  t_range=range(1, 50))
+                                  t_range=range(1, 50),
+                                  force_single_process=True)
+
+    res_parallel_2 = bench_own_impl(repeats=10,
+                                    p=2,
+                                    tau=64,
+                                    m=16,
+                                    t_range=range(1, 50))
 
     res_single_4 = bench_own_impl(repeats=10,
-                         p=4,
-                         tau=64,
-                         m=32,
-                         t_range=range(1, 50),
-                         force_single_process=True)
-
-    res_parallel_4 = bench_own_impl(repeats=10,
                                   p=4,
                                   tau=64,
                                   m=32,
-                                  t_range=range(1, 50))
-                                  
-    res_single_8 = bench_own_impl(repeats=10,
-                         p=8,
-                         tau=64,
-                         m=64,
-                         t_range=range(1, 50),
-                         force_single_process=True)
+                                  t_range=range(1, 50),
+                                  force_single_process=True)
 
-    res_parallel_8 = bench_own_impl(repeats=10,
+    res_parallel_4 = bench_own_impl(repeats=10,
+                                    p=4,
+                                    tau=64,
+                                    m=32,
+                                    t_range=range(1, 50))
+
+    res_single_8 = bench_own_impl(repeats=10,
                                   p=8,
                                   tau=64,
                                   m=64,
-                                  t_range=range(1, 50))
+                                  t_range=range(1, 50),
+                                  force_single_process=True)
+
+    res_parallel_8 = bench_own_impl(repeats=10,
+                                    p=8,
+                                    tau=64,
+                                    m=64,
+                                    t_range=range(1, 50))
 
     plot_time_results(
-        [list(range(1, 50)), list(range(1, 50)), list(range(1, 50)), list(range(1, 50)), list(range(1, 50)), list(range(1, 50))],
+        [list(range(1, 50)), list(range(1, 50)), list(range(1, 50)), list(range(1, 50)), list(range(1, 50)),
+         list(range(1, 50))],
         [res_single_2, res_parallel_2, res_single_4, res_parallel_4, res_single_8, res_parallel_8],
-        ["single process p=2", "multiprocess p=2", "single process p=4", "multiprocess p=4", "single process p=8", "multiprocess p=8"],
+        ["single process p=2", "multiprocess p=2", "single process p=4", "multiprocess p=4", "single process p=8",
+         "multiprocess p=8"],
         "t",
         f"Argon2d compute times for different t (avg over {10} repeats)"
     )
