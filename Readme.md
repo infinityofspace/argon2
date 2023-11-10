@@ -8,7 +8,13 @@ H.
 The algorithm code requires `numpy` to run. Moreover, the test cases and the benchmarks requires `matplotlib`
 and `argon2_cffi`.
 
-The required python version is 3.
+The required python version is 3.6+.
+
+Clone the project:
+
+```commandline
+git clone https://github.com/infinityofspace/argon2.git
+```
 
 You can install everything with:
 
@@ -25,3 +31,7 @@ The file `bechnmark.py` provides the following compute time benchmarks categorie
 - multiprocessing vs single process
 - hash length and compute time
 - this implementation vs C CFFI lib provided by argon2_cffi 
+
+## License
+
+This project is licensed under the MIT License - see the [License](License) file for details.
